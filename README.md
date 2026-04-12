@@ -106,18 +106,6 @@
 
 > **预估总成本:** 处理约10,000篇新闻，使用Haiku初筛 + Sonnet精细分析 + Batch API (5折)，总计约 **$50-75 USD**。DeepSeek做同等分析约$3-5。
 
-### 数据归档策略
-
-⚠️ **重要：** TradingView Premium的分钟级/小时级数据有时间窗口限制，超期后无法下载。本项目使用定时归档脚本，确保数据持续采集：
-
-```
-data_archiver/
-├── config.yaml          # 标的列表、频率、归档路径
-├── archive_tradingview.py   # TradingView数据定时下载
-├── archive_crypto.py    # Binance API小时级数据归档
-├── archive_news.py      # 新闻源定时抓取
-└── cron_setup.sh        # crontab配置（建议每日运行）
-```
 
 ### 项目结构
 
@@ -252,10 +240,6 @@ The geopolitical analysis spans the **US, mainland China, and Hong Kong**, explo
 | DeepSeek V3.2 | $0.14 | $0.28 | Robustness check / multi-LLM benchmark |
 
 > **Estimated total cost:** ~10,000 articles processed with Haiku screening + Sonnet analysis + Batch API (50% off) ≈ **$50-75 USD**. DeepSeek equivalent ≈ $3-5.
-
-## Data Archival Strategy
-
-⚠️ **Important:** TradingView Premium has time-window limits for intraday/hourly data — older data becomes unavailable for download. This project uses scheduled archival scripts to ensure continuous data collection.
 
 ```
 data_archiver/

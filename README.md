@@ -1,305 +1,265 @@
 # trump-policy-market-llm
 
-> **LLM-quantified analysis of Trump policy shocks on global equities, commodities, and cryptocurrency markets across US-China-HK geopolitical dimensions.**
+> **LLM-constructed Trump Policy Shock Index vs market price benchmarks: information beyond what prices can decompose.**
 >
-> **基于大语言模型的川普政策冲击量化分析：美中港地缘维度下的全球股市、大宗商品与加密货币市场影响研究**
+> **基于LLM构建的川普政策冲击指数：市场价格之外的结构化信息**
 
 <details>
 <summary>🇨🇳 中文说明 / Chinese Documentation</summary>
 
 ## 项目概述
 
-本项目包含一个三篇论文系列的数据管线、LLM情绪提取框架和实证分析代码。研究聚焦于川普政府的政策通讯（关税、制裁、外交言论、加密货币监管）如何传导至全球金融市场。
+本项目包含一个三篇论文系列的数据管线、LLM分类框架和实证分析代码。
 
-我们使用大语言模型（LLM）从新闻文本中构建细粒度、多维度的政策冲击指数（TPSI），并分析其对三类资产的异质性影响：
+**核心问题**：LLM从政策新闻中构建的Trump Policy Shock Index (TPSI)，是否包含市场价格信号（AUD/JPY、VIX、USDT溢价）**未充分反映**的信息？
 
-| 论文 | 资产类别 | 主要标的 |
-|------|----------|----------|
-| Paper 1 | 股票指数 | S&P 500, Nasdaq 100, 恒生指数, 恒生国企指数, 恒生科技指数, 沪深300 |
-| Paper 2 | 大宗商品 | 黄金期货(GC), 白银期货(SI), WTI原油期货(CL) |
-| Paper 3 | 加密货币 | Bitcoin(BTC), Ethereum(ETH), Monero(XMR) |
+市场价格是优秀的综合信号，但它只是"温度计"——只能告诉你"发烧了"，不能告诉你"是感染还是中暑"。对商品市场来说，关税（需求萎缩→油价↓）和制裁（供给收缩→油价↑）都让AUD/JPY下跌，但对原油方向相反。TPSI通过LLM的语义理解区分政策类型、传导渠道和地理目标，弥补了市场价格无法自行分解的结构化信息缺口。
 
-地缘政治分析维度覆盖**美国、中国大陆和香港**，利用各市场独特的制度特征进行跨市场比较。
+### 三篇论文
 
-### 核心管线（Pipeline）
+| 论文 | 资产 | 市场价格基准 | 核心发现 |
+|------|------|-------------|---------|
+| **Paper 2** (先发) | 黄金、白银、WTI原油 | **AUD/JPY** | TPSI在供给侧渠道（制裁、能源政策）提供AUD/JPY遗漏的增量信息 |
+| Paper 1 | SPX, NDX, HSI, HSCEI, HSTECH, CSI300 | VIX | TPSI捕获跨市场传导时序（US→HK→CN） |
+| Paper 3 | BTC, ETH, XMR | USDT/CNY OTC溢价 | "Trump Crypto Paradox"：pro-crypto言论 vs 政策不确定性 |
+
+三篇**共享同一个LLM分类管线**（只跑一次），各自在TPSI聚合和计量分析阶段独立执行。
+
+### 为什么用AUD/JPY做基准而不是GPR？
+
+| 维度 | GPR Index (Caldara-Iacoviello) | AUD/JPY |
+|------|-------------------------------|---------|
+| 类型 | 文本指数（与TPSI同源） | **市场价格**（独立信息源） |
+| 挑战性 | "LLM赢关键词计数不意外" | **赢市场价格 = 真正有信息增量** |
+| 与商品关联 | 间接 | 直接：AUD=中国商品需求，JPY=避险 |
+
+GPR保留在稳健性检验中。
+
+### 管线架构
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                     数据采集层 Data Ingestion                     │
 │                                                                 │
-│  ForexFactory ──┐                                               │
-│  (news+calendar)│                                               │
-│                 ├──► 原始新闻语料库 ──► 去重 & 时间标准化          │
-│  Yahoo News  ───┤   (EN + CN)                                   │
+│  Yahoo News ────┐                                               │
+│  (EN, 20关键词)  │                                               │
+│                 ├──► 原始新闻 ──► URL去重 + 语义去重              │
+│  ForexFactory ──┤   ~20,000篇                                   │
+│  (经济日历)      │                                               │
 │                 │                                                │
-│  金十数据    ───┤                                               │
-│  (jin10.com)    │                                               │
-│                 │                                                │
-│  Truth Social ──┘                                               │
-│  (补充,可选)                                                     │
+│  jin10.com ─────┘                                               │
+│  (中文, 稳健性)                                                  │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                  LLM分析管线 LLM Analysis Pipeline                │
+│              LLM统一分类管线（三篇共享，跑一次）                    │
 │                                                                 │
-│  Stage 1 ─ 事件检测 (Haiku 4.5, 低成本初筛)                      │
-│  │  输入: 原始新闻  →  输出: 是否川普政策相关 (binary)             │
+│  Stage 1 ─ Haiku 4.5 筛选                                       │
+│  │  输入: title + snippet + source + date                       │
+│  │  输出: {relevant: bool}  通过率~45%                           │
 │  │                                                              │
-│  Stage 2 ─ 多维分类 (Sonnet 4.6, 主力模型)                       │
-│  │  政策类型: Tariff | Sanction | Diplomatic | Crypto-Reg | Other│
+│  Stage 2 ─ Sonnet 4.6 九字段分类                                 │
+│  │  category: tariff | sanctions | energy | monetary |           │
+│  │           geopolitical | regulatory | crypto_policy           │
+│  │  sentiment: -2 to +2                                         │
+│  │  magnitude: low | medium | high                              │
+│  │  channel: safe_haven | supply_disruption | dollar_channel |   │
+│  │          risk_appetite | direct_commodity | trade_exposure |   │
+│  │          tech_decoupling | monetary_transmission |            │
+│  │          crypto_regulation | capital_flight                   │
+│  │  geo_target: us | china | hk | eu | russia | iran | ...      │
+│  │  equity/commodity/crypto_relevant: true | false               │
+│  │  prior_coverage: none | some | extensive                     │
 │  │                                                              │
-│  Stage 3 ─ 地理标签                                              │
-│  │  目标区域: US | China-Mainland | Hong-Kong | EU | Other       │
-│  │                                                              │
-│  Stage 4 ─ 情绪与强度评分                                        │
-│  │  方向: -5 to +5  |  强度: Low / Medium / High                 │
-│  │  含Chain-of-Thought推理过程                                   │
-│  │                                                              │
-│  Stage 5 ─ 指数构建                                              │
-│     聚合为日频 Trump Policy Shock Index (TPSI)                   │
-│     子指数: TPSI_tariff | TPSI_sanction | TPSI_diplomatic | ...  │
+│  Robustness ─ DeepSeek V3.2 全量重跑                             │
+│  仲裁 ─ Opus 4.6 (Sonnet≠DeepSeek的~8%)                         │
+│  审计 ─ Opus 4.6 Look-ahead Bias检测                             │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    市场数据层 Market Data                         │
+│                 TPSI 构建（每篇论文独立聚合）                      │
 │                                                                 │
-│  TradingView Premium ──► 价格数据归档 (OHLCV)                    │
-│  (定时归档,防数据过期)    ├── 股票指数 (SPX, NDX, HSI, CSI300...) │
-│                          ├── 商品期货 (GC, SI, CL)              │
-│  Yahoo Finance ──────────┤                                      │
-│  (补充+回填)              └── 加密货币 (BTC, ETH, XMR)           │
+│  Layer 1: 文章级评分 sentiment × magnitude × relevance门控       │
+│  Layer 2: 事件级去重 (category × geo_target 分组取中位数)         │
+│  Layer 3: 日级聚合 (中位数 + count + dispersion + ratio)         │
+│  Layer 4: 子指数分解 (by category / channel / geo)              │
+│  Layer 5: 变体 (衰减 / 来源加权 / 正负分离)                      │
 │                                                                 │
-│  Binance API ────────────► 加密货币高频数据 (小时级)              │
+│       ┌──────────┬──────────┬──────────┐                        │
+│       ▼          ▼          ▼          │                        │
+│  TPSI_commodity  TPSI_equity  TPSI_crypto                       │
+│   (Paper 2)      (Paper 1)    (Paper 3)                         │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                 下游实证分析 Empirical Analysis                    │
+│                     实证分析（各篇独立）                           │
 │                                                                 │
-│  Paper 1: 股票指数                                               │
-│  ├── Event Study (CAR)                                          │
+│  Paper 2: 商品  vs AUD/JPY                                      │
+│  ├── EGARCH(1,1): TPSI in mean + variance equations             │
+│  ├── 7 Specifications (AUD/JPY → TPSI → 子指数 → GPR)           │
+│  ├── 分渠道回归: supply vs demand vs direct                      │
+│  ├── 事件研究 CAR (Liberation Day, IEEPA裁决)                    │
+│  └── TVP-VAR + Granger + Δρ相关性偏移                            │
+│                                                                 │
+│  Paper 1: 股票  vs VIX                                          │
 │  ├── Panel Regression (市场固定效应)                              │
-│  └── Cross-market Granger Causality                             │
+│  ├── Cross-market Granger: US → HK → CN 传导时序                 │
+│  └── 分地理: TPSI_china → HSI vs TPSI_us → SPX                  │
 │                                                                 │
-│  Paper 2: 大宗商品                                               │
-│  ├── EGARCH (回报率+波动率建模)                                   │
-│  ├── Horse Race vs GPR Index                                    │
-│  └── TVP-VAR (跨商品溢出)                                       │
-│                                                                 │
-│  Paper 3: 加密货币                                               │
+│  Paper 3: 加密  vs USDT/CNY溢价                                  │
 │  ├── GJR-GARCH (非对称波动)                                      │
 │  ├── CAViaR (尾部风险)                                           │
-│  └── DCC-GARCH (跨资产相关性)                                    │
+│  └── DCC-GARCH + "Trump trade" paradox                          │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### LLM API成本参考（2026年4月）
+### 预算
 
-| 模型 | 输入 ($/1M tokens) | 输出 ($/1M tokens) | 本项目用途 |
-|------|-------------------|-------------------|-----------|
-| Claude Haiku 4.5 | $1.00 | $5.00 | Stage 1 初筛 |
-| Claude Sonnet 4.6 | $3.00 | $15.00 | Stage 2-4 主力分析 |
-| Claude Opus 4.6 | $5.00 | $25.00 | 边缘案例验证 |
-| DeepSeek V3.2 | $0.14 | $0.28 | Robustness check / 多LLM验证 |
-
-> **预估总成本:** 处理约10,000篇新闻，使用Haiku初筛 + Sonnet精细分析 + Batch API (5折)，总计约 **$50-75 USD**。DeepSeek做同等分析约$3-5。
-
-
-### 项目结构
-
-```
-trump-policy-market-llm/
-│
-├── README.md                   # 本文件（中英双语）
-├── requirements.txt            # Python依赖
-├── LICENSE                     # MIT License
-│
-├── data/
-│   ├── raw/
-│   │   ├── news/               # 原始新闻语料（EN + CN）
-│   │   └── market/             # 原始市场价格数据
-│   └── processed/              # LLM标注后的结构化数据
-│
-├── data_archiver/              # 定时数据归档模块
-│
-├── src/
-│   ├── llm_pipeline/           # 核心LLM分析管线（三篇论文共享）
-│   │   ├── prompts/            # Prompt模板
-│   │   ├── extraction.py       # LLM API调用（Claude / DeepSeek）
-│   │   ├── index_builder.py    # TPSI指数构建
-│   │   └── validation.py       # 人工标注一致性验证
-│   │
-│   ├── paper1_equities/        # 论文1：股票指数
-│   ├── paper2_commodities/     # 论文2：大宗商品
-│   └── paper3_crypto/          # 论文3：加密货币
-│
-├── notebooks/                  # 探索性分析
-├── results/                    # 输出表格和图表
-└── docs/proposals/             # 研究提案
-```
+| 组成 | 费用 |
+|------|------|
+| LLM分类（三篇共享，含2.5轮迭代+缓冲） | ~$115 |
+| 价格数据（yfinance等） | $0 |
+| 新闻采集（Yahoo, ForexFactory, jin10） | $0 |
+| **合计** | **~$115** |
 
 </details>
 
 ## Overview
 
-This repository contains the data pipeline, LLM sentiment extraction framework, and empirical analysis code for a three-paper research series examining how Trump administration policy communications (tariffs, sanctions, diplomatic rhetoric, crypto regulation) propagate through global financial markets.
+This repository contains the data pipeline, LLM classification framework, and empirical analysis code for a **three-paper research series** examining whether LLM-constructed policy shock indices contain information that **market price benchmarks cannot decompose**.
 
-We employ large language models to construct granular, multi-dimensional policy shock indices from news text, and analyze their heterogeneous impact across three asset classes:
+### Core Question
 
-| Paper | Asset Class | Instruments |
-|-------|-------------|-------------|
-| Paper 1 | Equity Indices | S&P 500, Nasdaq 100, Hang Seng, HSCEI, HSTECH, CSI 300 |
-| Paper 2 | Commodities | Gold futures (GC), Silver futures (SI), WTI Crude Oil (CL) |
-| Paper 3 | Cryptocurrency | Bitcoin (BTC), Ethereum (ETH), Monero (XMR) |
+Market prices are excellent aggregate signals — AUD/JPY captures commodity demand and safe-haven sentiment, VIX captures equity fear, USDT premiums capture capital flight pressure. But they are "thermometers": they tell you the temperature, not the diagnosis. Tariffs (demand contraction → oil↓) and sanctions (supply disruption → oil↑) both push AUD/JPY lower, yet affect crude oil in opposite directions. Our LLM-based Trump Policy Shock Index (TPSI) decomposes policy type, transmission channel, and geographic target — structural information that market prices cannot self-decompose.
 
-The geopolitical analysis spans the **US, mainland China, and Hong Kong**, exploiting each market's unique institutional features for cross-market comparison.
+### Three Papers
+
+| Paper | Assets | Market Benchmark | Key Contribution |
+|-------|--------|-----------------|------------------|
+| **Paper 2** (first) | Gold, Silver, WTI Crude | **AUD/JPY** | TPSI adds supply-side information invisible to AUD/JPY |
+| Paper 1 | SPX, NDX, HSI, HSCEI, HSTECH, CSI300 | **VIX** | TPSI captures US→HK→CN transmission sequence |
+| Paper 3 | BTC, ETH, XMR | **USDT/CNY premium** | "Trump Crypto Paradox": pro-crypto rhetoric vs policy uncertainty |
+
+All three share **one LLM classification pipeline** (run once), with paper-specific TPSI aggregation and econometrics.
+
+### Why AUD/JPY Instead of GPR?
+
+| | GPR Index | AUD/JPY |
+|---|-----------|---------|
+| Type | Text index (same source as TPSI) | **Market price** (independent) |
+| Challenge | "LLM beats keyword counting — expected" | **Beating a market signal = genuine information increment** |
+| Commodity link | Indirect | Direct: AUD=China commodity demand, JPY=safe haven |
+
+GPR is retained in robustness checks.
 
 ## Pipeline Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                       Data Ingestion Layer                       │
-│                                                                 │
-│  ForexFactory ──┐                                               │
-│  (news+calendar)│                                               │
-│                 ├──► Raw News Corpus ──► Dedup & Normalization   │
-│  Yahoo News  ───┤   (EN + CN)                                   │
-│                 │                                                │
-│  jin10.com   ───┤                                               │
-│  (CN finance)   │                                               │
-│                 │                                                │
-│  Truth Social ──┘                                               │
-│  (supplementary)                                                │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    LLM Analysis Pipeline                         │
-│                                                                 │
-│  Stage 1 ─ Event Detection (Haiku 4.5, low-cost screening)      │
-│  │  Input: raw news  →  Output: Trump-policy relevant? (binary) │
-│  │                                                              │
-│  Stage 2 ─ Multi-Dimensional Classification (Sonnet 4.6)        │
-│  │  Policy: Tariff | Sanction | Diplomatic | Crypto-Reg | Other │
-│  │                                                              │
-│  Stage 3 ─ Geographic Tagging                                   │
-│  │  Target: US | China-Mainland | Hong-Kong | EU | Other        │
-│  │                                                              │
-│  Stage 4 ─ Sentiment & Intensity Scoring                        │
-│  │  Direction: -5 to +5  |  Intensity: Low / Medium / High      │
-│  │  With Chain-of-Thought reasoning trace                       │
-│  │                                                              │
-│  Stage 5 ─ Index Construction                                   │
-│     Aggregate into daily Trump Policy Shock Index (TPSI)        │
-│     Sub-indices: TPSI_tariff | TPSI_sanction | TPSI_diplomatic  │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      Market Data Layer                           │
-│                                                                 │
-│  TradingView Premium ──► Price Data Archive (OHLCV)             │
-│  (scheduled archival)    ├── Equity indices (SPX, NDX, HSI...)  │
-│                          ├── Commodity futures (GC, SI, CL)     │
-│  Yahoo Finance ──────────┤                                      │
-│  (backfill + supplement)  └── Crypto (BTC, ETH, XMR)           │
-│                                                                 │
-│  Binance API ────────────► Crypto hourly data (for Paper 3)     │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     Empirical Analysis                           │
-│                                                                 │
-│  Paper 1: Equity Indices                                        │
-│  ├── Event Study (CAR)                                          │
-│  ├── Panel Regression (market fixed effects)                    │
-│  └── Cross-market Granger Causality                             │
-│                                                                 │
-│  Paper 2: Commodities                                           │
-│  ├── EGARCH (return + volatility modeling)                      │
-│  ├── Horse Race vs Caldara-Iacoviello GPR Index                 │
-│  └── TVP-VAR (cross-commodity spillover)                        │
-│                                                                 │
-│  Paper 3: Cryptocurrency                                        │
-│  ├── GJR-GARCH (asymmetric volatility)                          │
-│  ├── CAViaR (tail risk)                                         │
-│  └── DCC-GARCH (cross-asset correlation)                        │
-└─────────────────────────────────────────────────────────────────┘
+Data Ingestion
+  Yahoo News (EN, 20 keywords) + ForexFactory + jin10.com (CN)
+  → ~20,000 articles → URL dedup + semantic dedup
+       │
+       ▼
+Unified LLM Pipeline (shared, run once, ~$115)
+  Stage 1: Haiku 4.5 screening (relevant? binary)
+  Stage 2: Sonnet 4.6 nine-field classification
+           category | sentiment | magnitude | channel |
+           geo_target | equity/commodity/crypto_relevant |
+           prior_coverage | rationale
+  Robustness: DeepSeek V3.2 full re-run
+  Arbitration: Opus 4.6 (disagreements ~8%)
+  Audit: Opus 4.6 look-ahead bias detection
+       │
+       ▼
+TPSI Construction (paper-specific aggregation)
+  Layer 1: Article scoring (sentiment × magnitude × relevance gate)
+  Layer 2: Event-level dedup (category × geo → median)
+  Layer 3: Daily aggregation (median + count + dispersion)
+  Layer 4: Sub-indices (by category / channel / geography)
+  Layer 5: Variants (decay / source weighting / ratio)
+       │
+       ├──► Paper 2: TPSI_commodity → EGARCH vs AUD/JPY
+       ├──► Paper 1: TPSI_equity → Panel regression vs VIX
+       └──► Paper 3: TPSI_crypto → GJR-GARCH vs USDT premium
 ```
 
-## LLM API Cost Reference (April 2026)
+## Key Design Decisions
 
-| Model | Input ($/1M tokens) | Output ($/1M tokens) | Role in This Project |
-|-------|---------------------|----------------------|----------------------|
-| Claude Haiku 4.5 | $1.00 | $5.00 | Stage 1 screening |
-| Claude Sonnet 4.6 | $3.00 | $15.00 | Stage 2-4 main analysis |
-| Claude Opus 4.6 | $5.00 | $25.00 | Edge case validation |
-| DeepSeek V3.2 | $0.14 | $0.28 | Robustness check / multi-LLM benchmark |
+**Discrete over continuous**: LLMs classify reliably (6-choose-1) but score poorly (0.73 vs 0.71). Magnitude uses {low, medium, high}, not 0.0–1.0. Commodity relevance uses binary, not continuous weights. This follows BIS WP1294 (Kwon et al. 2025) methodology.
 
-> **Estimated total cost:** ~10,000 articles processed with Haiku screening + Sonnet analysis + Batch API (50% off) ≈ **$50-75 USD**. DeepSeek equivalent ≈ $3-5.
+**Median over mean**: Daily TPSI aggregates via median (robust to outliers), with event-level deduplication preventing single events from dominating via high article volume.
 
-```
-data_archiver/
-├── config.yaml              # Instrument list, frequencies, archive paths
-├── archive_tradingview.py   # Scheduled TradingView data download
-├── archive_crypto.py        # Binance API hourly data archival
-├── archive_news.py          # News source scheduled scraping
-└── cron_setup.sh            # Crontab configuration (recommended: daily)
-```
+**Prior coverage replaces surprise factor**: LLMs cannot reliably assess "market expectations" ex-ante without look-ahead bias. Instead, `prior_coverage` (none/some/extensive) measures the news timeline, entering regressions as a novelty interaction term.
 
 ## Repository Structure
 
 ```
 trump-policy-market-llm/
 │
-├── README.md                   # This file (bilingual EN/CN)
+├── README.md
 ├── requirements.txt
-├── LICENSE                     # MIT
+├── LICENSE (MIT)
+│
+├── config/
+│   └── settings.py             # Tickers, keywords, events, constants
 │
 ├── data/
 │   ├── raw/
 │   │   ├── news/               # Raw news corpus (EN + CN)
-│   │   └── market/             # Raw market price data
-│   └── processed/              # LLM-annotated structured data
-│
-├── data_archiver/              # Scheduled data archival module
+│   │   └── prices/             # OHLCV price data
+│   └── processed/              # LLM-classified, TPSI daily series
 │
 ├── src/
-│   ├── llm_pipeline/           # Core LLM pipeline (shared across papers)
-│   │   ├── prompts/            # Prompt templates
-│   │   ├── extraction.py       # LLM API calls (Claude / DeepSeek)
-│   │   ├── index_builder.py    # TPSI index construction
-│   │   └── validation.py       # Human annotation agreement metrics
+│   ├── data_collection/
+│   │   ├── fetch_prices.py
+│   │   ├── fetch_news_yahoo.py
+│   │   └── fetch_news_forexfactory.py
 │   │
-│   ├── paper1_equities/        # Paper 1: Equity indices
-│   ├── paper2_commodities/     # Paper 2: Commodity futures
-│   └── paper3_crypto/          # Paper 3: Cryptocurrency
+│   ├── llm_pipeline/           # Shared across all three papers
+│   │   └── llm_classify.py     # Stage 1+2, build_tpsi()
+│   │
+│   ├── tpsi/                   # TPSI construction modules
+│   │   ├── score.py            # Layer 1: article-level scoring
+│   │   ├── aggregate.py        # Layer 2-3: event dedup + daily
+│   │   ├── subindex.py         # Layer 4: sub-index decomposition
+│   │   └── variants.py         # Layer 5: decay, ratio, weighting
+│   │
+│   └── analysis/
+│       ├── event_study.py
+│       ├── egarch.py
+│       ├── correlation_shift.py
+│       └── tvp_var.py
 │
-├── notebooks/                  # Exploratory analysis
-├── results/                    # Output tables and figures
-└── docs/proposals/             # Research proposals
+├── results/
+├── notebooks/
+├── run_pipeline.py
+└── docs/
+    └── proposals/
 ```
-
-## Papers
-
-1. **One Shock, Three Markets** — LLM-based decomposition of Trump policy sentiment and asymmetric equity index responses across the US, Hong Kong, and mainland China.
-2. **Beyond the GPR Index** — LLM-constructed Trump policy shock indicators and heterogeneous impacts on gold, silver, and crude oil futures.
-3. **The Trump Crypto Paradox** — LLM-quantified policy sentiment, the "Trump trade" hypothesis, and tail risk in digital asset markets.
-
-## Tech Stack
-
-- **Language:** Python 3.11+
-- **LLM APIs:** Claude (Anthropic), DeepSeek
-- **Market Data:** TradingView Premium, Yahoo Finance, Binance API
-- **News Sources:** ForexFactory, Yahoo News, jin10.com, Truth Social (supplementary)
-- **Key Libraries:** pandas, statsmodels, arch (GARCH), scipy, matplotlib, requests
 
 ## Sample Period
 
-November 2024 (Trump election) — March 2026 (latest available)
+November 2024 (Trump election) — March 2026
+
+## Tech Stack
+
+- **Language**: Python 3.11+
+- **LLM APIs**: Claude (Anthropic), DeepSeek, Gemini (validation)
+- **Market Data**: Yahoo Finance (yfinance), tushare/akshare (China)
+- **News Sources**: Yahoo News, ForexFactory, jin10.com
+- **Key Libraries**: pandas, arch (GARCH), scipy, statsmodels, numpy
+
+## Budget
+
+| Item | Cost |
+|------|------|
+| LLM classification (shared, 2.5 iterations + buffer) | ~$115 |
+| Market data (yfinance, GPR index) | $0 |
+| News scraping | $0 |
+| **Total** | **~$115** |
 
 ## License
 
